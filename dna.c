@@ -21,15 +21,7 @@ typedef struct ListaDNA_s {
 } ListaDNA;
 
 void push(ListaDNA *head, DNA *val) {
-	if (head == NULL) {
-		head = (ListaDNA*) malloc(sizeof(ListaDNA));
-		head->dna = val;
-		head->next = NULL;
-	}
-	
-	else {
 		ListaDNA *current = head;
-
 		while (current->next != NULL) {
 			current = current->next;
 		}
@@ -37,7 +29,7 @@ void push(ListaDNA *head, DNA *val) {
 		current->next = (ListaDNA *)malloc(sizeof(ListaDNA));
 		current->next->dna = val;
 		current->next->next = NULL;
-	}
+
 }
 
 DNA *getElement(ListaDNA *head, int index) {
@@ -171,8 +163,10 @@ int main(int argc, char **argv) {
 	MPI_Comm_size(MPI_COMM_WORLD, &np);
 
 	//LISTA ENCADEADA COM A INFORMAÇAO DOS ARQUIVOS
-	ListaDNA *ListaQuery = NULL;
-	ListaDNA *listaBase = NULL;
+	ListaDNA *ListaQuery = (ListaDNA*) malloc(sizeof(ListaDNA));
+	ListaQuery->next = NULL;
+	ListaDNA *listaBase = (ListaDNA*) malloc(sizeof(ListaDNA));
+	listaBase->next = NULL;
 	int controleProcesso[np];
 
 	//BUFFER DE LEITURA COM O TAMANHO MAXIMO POSSIVEL DO ARQUIVO
@@ -214,14 +208,14 @@ int main(int argc, char **argv) {
 			fgets(desc_dna, 80, fquery);
 			stpcpy(query->descricao, desc_dna);
 			//COMEÇA A LEITURA DO CONTEUDO DO ARQUIVO
-			fgets(line, 80, fdatabase);
+			fgets(line, 80, fquery);
 			remove_eol(line);
 			bases[0] = 0;
 
 			do {
 				strcat(bases + i, line);
 
-				if (fgets(line, 100, fdatabase) == NULL)
+				if (fgets(line, 100, fquery) == NULL)
 					break;
 
 				remove_eol(line);
