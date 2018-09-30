@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <mpi.h>
 
@@ -9,12 +10,12 @@
 typedef struct DNA_s {
 	char descricao [80] ;
 	int index;
-	char * conteudo
+	char * conteudo;
 } DNA;
 
 typedef struct ListaDNA_s{
 	DNA * dna;
-	ListaDNA * next;
+	struct ListaDNA_s * next;
 } ListaDNA;
 
 
@@ -35,18 +36,26 @@ void push(ListaDNA * head, DNA * val) {
 	}
 }
 
-DNA * getElement(node_t * head,int index) {
-    node_t * current = head;
-	int temp =0
+DNA * getElement(ListaDNA * head,int index) {
+    ListaDNA * current = head;
+	int temp =0;
     while (current != NULL) {
 		if(temp=index){
-			return current
+			return current->dna;
 		}
         current = current->next;
 		temp++;
     }
 }
 
+void liberaLista(ListaDNA * head){
+	while(head != NULL){
+		free(head->dna);
+		ListaDNA * anterior = head;
+		head = head->next;
+		free(anterior);
+	}
+}
 
 
 char *substring(char *string, int position, int length) 
@@ -141,7 +150,7 @@ void closefiles() {
 	fclose(fout);
 }
 
-inline void remove_eol(char *line) {
+void remove_eol(char *line) {
 	int i = strlen(line) - 1;
 	while (line[i] == '\n' || line[i] == '\r') {
 		line[i] = 0;
@@ -169,7 +178,7 @@ int main(int argc, char **argv) {
 	//LISTA ENCADEADA COM A INFORMAÇAO DOS ARQUIVOS
 	ListaDNA * ListaQuery = NULL;
 	ListaDNA * listaBase = NULL;
-	int controleProcesso [np]
+	int controleProcesso [np];
 	
 	//BUFFER DE LEITURA COM O TAMANHO MAXIMO POSSIVEL DO ARQUIVO
 	char * bases = (char*) malloc(sizeof(char) * 1000001);
@@ -181,10 +190,10 @@ int main(int argc, char **argv) {
 	
 	
 	//https://stackoverflow.com/questions/9864510/struct-serialization-in-c-and-transfer-over-mpi
-	const int nitems=3
+	const int nitems=3;
 	int          blocklengths[3] = {1,1,1};
-	MPI_Datatype types[3] = {MPI_CHAR,MPI_INT,MPI_CHAR}
-	MPI_Datatype mpi_dna_type
+	MPI_Datatype types[3] = {MPI_CHAR,MPI_INT,MPI_CHAR};
+	MPI_Datatype mpi_dna_type;
 	MPI_Aint     offsets[3];
 	
 	offsets[0] = offsetof(DNA, descricao);
@@ -212,11 +221,11 @@ int main(int argc, char **argv) {
 		while (!feof(fquery)) 
 		{
 			//INICIALIZA STRUCT
-			query = (DNA*) malloc(sizeof(DNA));
+			DNA * query = (DNA*) malloc(sizeof(DNA));
 			query->index = dnasQuery++;
 			//RECUPERA DESCRICAO
 			fgets(desc_dna, 80, fquery);
-			query->descricao = desc_dna;
+			stpcpy(query->descricao, desc_dna);
 			//COMEÇA A LEITURA DO CONTEUDO DO ARQUIVO
 			fgets(line, 80, fdatabase);
 			remove_eol(line);
@@ -234,26 +243,28 @@ int main(int argc, char **argv) {
 			query->conteudo = linha;
 		
 			//Atualiza o resto
-			int temp = srtlen(linha);
+			int temp = strlen(linha);
 			if(temp > resto){
 				resto = temp;
 			}
 			
 			//ATUALIZA LISTA
 			push(ListaQuery,query);
-			for (source = 1; source < np; source++) {
+			for (int source = 1; source < np; source++) {
 				MPI_Send(&query,  1, mpi_dna_type, source, tag, MPI_COMM_WORLD);
 			}
 		}		
-		query = (DNA*) malloc(sizeof(DNA));
+		DNA * query = (DNA*) malloc(sizeof(DNA));
 		query->index = -1;
-		MPI_Send(&query,  1, mpi_dna_type, source, tag, MPI_COMM_WORLD);			
+		for (int source = 1; source < np; source++) {
+			MPI_Send(&query,  1, mpi_dna_type, source, tag, MPI_COMM_WORLD);	
+		}		
 	}
 	else
 	{
 		while(1){
-			DNA query;
-			MPI_Recv(&query, 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, &status)	
+			DNA * query;
+			MPI_Recv(&query, 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, &status);
 			if(query->index != -1){
 				push(ListaQuery,query);
 			}else{
@@ -270,13 +281,13 @@ int main(int argc, char **argv) {
 		while (!feof(fdatabase)) 
 		{
 			
-			base = (DNA*) malloc(sizeof(DNA));
+			DNA * base = (DNA*) malloc(sizeof(DNA));
 			base->index = dnasQuery++;
 			
 			//EFETUA A LEITURA
 			
 			fgets(desc_dna, 80, fdatabase);
-			base->descricao = desc_dna;
+			stpcpy(base->descricao, desc_dna);
 			remove_eol(desc_dna);
 			fgets(line, 80, fdatabase);
 			remove_eol(line);
@@ -318,7 +329,7 @@ int main(int argc, char **argv) {
 					
 					if(tag == 200){
 						int controle = controleProcesso[status.MPI_SOURCE];
-						DNA * no = getElement(dnasBase,controle);
+						DNA * no = getElement(listaBase,controle);
 						fprintf(fout, "%s\n%s\n%d\n", result,no->descricao,index);
 					}else{
 						fprintf(fout, "%s\nNOT FOUND\n",result);
@@ -327,13 +338,13 @@ int main(int argc, char **argv) {
 				}
 				receives=0;
 			}
-			DNA * dnaBase = current->val;
+			DNA * dnaBase = current->dna;
 			char * linha = dnaBase->conteudo;
-			int size = srtlen(linha);
+			int size = strlen(linha);
 			//gambiarra do stack
 			int parts = 1 + ((size - 1) / 80);
 			
-			for(int i=0; i<parts;i++{
+			for(int i=0; i<parts;i++){
 				int temp = i+80+resto;
 				int tamanho = 80 + resto;
 				if(temp>size){
@@ -351,13 +362,14 @@ int main(int argc, char **argv) {
 	else
 	{	
 		while(1){
+			char * base;
 			MPI_Recv(&base, 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, &status);
 			if(tag != 200){
 				break;
 			}
 			ListaDNA * current = ListaQuery;
 			while(current !=NULL){
-				DNA * dnaBase = current->val;
+				DNA * dnaBase = current->dna;
 				char * linha = dnaBase->conteudo;
 				char * detalhe = dnaBase->descricao;
 				result = bmhs(base, strlen(base), linha, strlen(linha));
@@ -366,10 +378,11 @@ int main(int argc, char **argv) {
 					MPI_Send(&detalhe,1,MPI_CHAR,0,tag, MPI_COMM_WORLD);	
 				}
 				else{
-					MPI_Send(1,  1, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);	
+					int i =0;
+					MPI_Send(&i,  1, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);	
 					MPI_Send(&detalhe,1,MPI_CHAR,0,0, MPI_COMM_WORLD);						
 				}
-			}		
+					
 			current = current->next;
 			}	
 		}
@@ -382,10 +395,12 @@ int main(int argc, char **argv) {
 	}
 	
 
-	free(query);
+
 	free(bases);
-	free(queryProcessadas);
+	liberaLista(ListaQuery);
+	liberaLista(listaBase);
 	
+	 MPI_Type_free(&mpi_dna_type);
 	MPI_Finalize();
 	
 	return EXIT_SUCCESS;
