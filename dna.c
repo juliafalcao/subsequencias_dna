@@ -110,7 +110,6 @@ void slice_str(const char *str, char *buffer, size_t start, size_t end) {
 	buffer[j] = 0;
 }
 
-// Result* divide(char *string, int tam_string /* n */, char *substr, int tam_substring /* m */) {
 Result* divide(String *database, int n, Query *query, int m) {
 	Result* result = (Result*) malloc(sizeof(Result));
 	if (result == NULL) {
