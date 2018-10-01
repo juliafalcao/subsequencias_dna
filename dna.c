@@ -257,7 +257,8 @@ int main(int argc, char** argv) {
 		if (strlen(line) == 0) break;
 
 		strcpy(query->substring, line); // salvar substring
-		printf("%s\n", query->description);
+		// printf("%s\n", query->description);
+		fprintf(fout, "%s\n", query->description);
 
 		/* leitura do arquivo de strings */
 		fseek(fdatabase, 0, SEEK_SET);
@@ -306,17 +307,18 @@ int main(int argc, char** argv) {
 
 			if (result->pos != -1) {
 				found = 1;
-				printf("%s\n", result->database->description);
-				printf("%d\n", result->pos);
+				// printf("%s\n", result->database->description);
+				// printf("%d\n", result->pos);
+				fprintf(fout, "%s\n", result->database->description);
+				fprintf(fout, "%d\n", result->pos);
 			}
 
 			free(result);
 		}
 
 		if (found == 0) {
-			// printf("database->description: %s\n", database->description);
-			// printf("query->substring: %s\n", query->substring);
-			printf("NOT FOUND\n");
+			// printf("NOT FOUND\n");
+			fprintf(fout, "NOT FOUND\n");
 		}
 	}
 
