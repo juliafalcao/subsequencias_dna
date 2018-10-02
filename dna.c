@@ -7,6 +7,10 @@
 // MAX char table (ASCII)
 #define MAX 256
 
+#define MAX_DATABASE_LENGTH 1000001
+
+#define MASTER 0 // processo coordenador
+
 // estrutura que armazena um registro de DNA obtido de um arquivo FASTA
 typedef struct DNA_s {
     char descricao[80];
@@ -34,34 +38,42 @@ Resp;
 - insere se não existir query
 - se já houver query, verifica se não é NOT FOUND antes de inserir */
 void pushResp(Resp *head, char *query, char *descricao) {
-    Resp*current = head;
+    printf("PUSH RESP -- query: %s, descricao: %s\n", query, descricao);
+    Resp* current = head, *last = NULL;
 
-    while (current->next != NULL) {
+    while (current != NULL) {
         // verifica se é uma query nova ou não
         if (strcmp(current->query, query) == 0) {
             // compara se ainda é NOT FOUND ou não
-            if (strstr(current->descricao, "NOT FOUND\0\n") != NULL) {
+            if (strstr(current->descricao, "NOT FOUND") != NULL) {
                 current->descricao[0] = 0;
             }
-            int size = strlen(current->descricao) + strlen(descricao) + 2;
 
-            //REALOCA VETOR PARA CONCATENAR MAIS INFOS
+            int size = strlen(current->descricao) + strlen(descricao) + 1;
+
+            // realoca vetor para concatenar mais informações
             current->descricao = (char*) realloc(current->descricao, sizeof(char) *(strlen(current->descricao) + strlen(descricao) + 2));
             strcat(current->descricao, "\n");
             strcat(current->descricao, descricao);
             return;
         }
+
+        last = current;
         current = current->next;
     }
-    //CASO NAO EXISTA INSERE UM NOVO
-    current->next = (Resp*) malloc(sizeof(Resp));
-    current->next->query = (char*) malloc(sizeof(char) *(strlen(query) + 1));
-    stpcpy(current->next->query, query);
-    current->next->descricao = (char*) malloc(sizeof(char) *(strlen(descricao) + 1));
-    stpcpy(current->next->descricao, descricao);
-    current->next->next = NULL;
+
+    printf("PUSH RESP -- inserindo fora do while\n");
+
+    // caso não existir, insere um novo no final da lista
+    last->next = (Resp*) malloc(sizeof(Resp));
+    last->next->query = (char*) malloc(sizeof(char) *(strlen(query) + 1));
+    stpcpy(last->next->query, query);
+    last->next->descricao = (char*) malloc(sizeof(char) *(strlen(descricao) + 1));
+    stpcpy(last->next->descricao, descricao);
+    last->next->next = NULL;
 }
-//FREE
+
+/* função para liberar lista de respostas */
 void liberaListaResp(Resp *head) {
     while (head != NULL) {
         free(head->descricao);
@@ -72,6 +84,7 @@ void liberaListaResp(Resp *head) {
     }
 }
 
+/* função para inserir DNA na lista */
 void push(ListaDNA *head, DNA *val) {
     if (head->dna == NULL) {
         head->dna = val;
@@ -88,6 +101,7 @@ void push(ListaDNA *head, DNA *val) {
 
 }
 
+/* obter elemento da lista */
 DNA *getElement(ListaDNA *head, int index) {
     ListaDNA *current = head;
     int temp = 0;
@@ -101,6 +115,7 @@ DNA *getElement(ListaDNA *head, int index) {
     }
 }
 
+/* função para liberar lista */
 void liberaLista(ListaDNA *head) {
     while (head != NULL) {
         free(head->dna);
@@ -110,6 +125,7 @@ void liberaLista(ListaDNA *head) {
     }
 }
 
+/* função que recebe uma string, uma posição e um tamanho e retorna uma substring */
 char *substring(char *string, int position, int length) {
     char *pointer;
     int c;
@@ -141,7 +157,7 @@ void slice_str(const char *str, char *buffer, size_t start, size_t end) {
     buffer[j] = 0;
 }
 
-// Boyers-Moore-Hospool-Sunday algorithm for string matching
+/* Boyers-Moore-Hospool-Sunday algorithm for string matching */
 int bmhs(char *string, int n, char *substr, int m) {
 
     int d[MAX];
@@ -173,8 +189,9 @@ int bmhs(char *string, int n, char *substr, int m) {
 
 FILE *fdatabase, *fquery, *fout;
 
-void openfiles() {
 
+/* função que abre os arquivos */
+void openfiles() {
     fdatabase = fopen("dna.in", "r+");
     if (fdatabase == NULL) {
         perror("dna.in");
@@ -196,6 +213,7 @@ void openfiles() {
     }
 }
 
+/* função que fecha os arquivos */
 void closefiles() {
     fflush(fdatabase);
     fclose(fdatabase);
@@ -207,6 +225,7 @@ void closefiles() {
     fclose(fout);
 }
 
+
 void remove_eol(char *line) {
     int i = strlen(line) - 1;
     while (line[i] == '\n' || line[i] == '\r') {
@@ -215,6 +234,7 @@ void remove_eol(char *line) {
     }
 }
 
+/* função que recebe a lista de respostas e escreve no arquivo */
 void ImprimeSaida(Resp *head) {
     while (head != NULL) {
         fprintf(fout, "%s\n", head->query);
@@ -222,6 +242,8 @@ void ImprimeSaida(Resp *head) {
         head = head->next;
     }
 }
+
+/* função que imprime lista no terminal */
 void PrintaLista(Resp *head) {
     printf("-----------------\n");
     while (head != NULL) {
@@ -232,20 +254,21 @@ void PrintaLista(Resp *head) {
     printf("-----------------\n");
 }
 
+
 int main(int argc, char **argv) {
     int my_rank, np; // rank e número de processos
     int tag = 200;
-    int dnasQuery = 0;
-    int dnasBase = 0;
+    int dnasQuery = 0; // índice sequencial de queries
+    int dnasBase = 0; // índice sequencial de bases
     int resto = 0;
 
-    //INICIALIZA MPI
+    /* inicialização do MPI */
     MPI_Status status;
-    MPI_Init( & argc, & argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, & my_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, & np);
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &np);
 
-    //LISTA ENCADEADA COM A INFORMAÇAO DOS ARQUIVOS
+    /* criação de listas encadeadas com as informações dos arquivos de entrada */
     ListaDNA *ListaQuery = (ListaDNA*) malloc(sizeof(ListaDNA));
     ListaQuery->next = NULL;
     ListaQuery->dna = NULL;
@@ -254,23 +277,21 @@ int main(int argc, char **argv) {
     listaBase->dna = NULL;
     Resp *resposta = NULL;
 
-    //BUFFER DE LEITURA COM O TAMANHO MAXIMO POSSIVEL DO ARQUIVO
-    char *bases = (char*) malloc(sizeof(char) *1000001);
+    /* buffer de leitura com o tamanho máximo possível do arquivo */
+    char *bases = (char*) malloc(sizeof(char) * MAX_DATABASE_LENGTH);
     if (bases == NULL) {
         perror("malloc bases");
         exit(EXIT_FAILURE);
     }
 
-    //SOMENTE O PROCESSO 0 FAZ A LEITURA DOS ARQUIVOS
-    if (my_rank == 0) {
-        openfiles();
-    }
     char desc_dna[80], desc_query[80];
     char line[80];
     int i, found, result;
 
-    //LEITURA DO ARQUIVO DE QUERY E CRIAÇAO DA LISTA DE QUERY
-    if (my_rank == 0) {
+    /* processo coordenador abre e lê arquivo de queries e cria lista encadeada */
+    if (my_rank == MASTER) {
+        openfiles();
+
         while (!feof(fquery)) {
             if (line[0] == '>') {
                 strcpy(desc_query, line);
@@ -308,35 +329,36 @@ int main(int argc, char **argv) {
             //ENVIA A INFORMACAO PARA OS OUTROS PROCESSOS
             for (int source = 1; source < np; source++) {
 
-                int desc_lenght = strlen(desc_query);
+                int desc_length = strlen(desc_query);
                 char *desc = (char*) malloc(sizeof(char) *(strlen(desc_query) + 1));
                 stpcpy(desc, desc_query);
 
                 //SEND DA DESCRICAO
-                MPI_Send( & desc_lenght, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
-                MPI_Send(desc, desc_lenght + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
+                MPI_Send(&desc_length, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+                MPI_Send(desc, desc_length + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
                 //SEND DO INDEX
-                MPI_Send( & dnasQuery, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+                MPI_Send(&dnasQuery, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
 
-                int bases_lenght = strlen(bases);
+                int bases_length = strlen(bases);
                 char *basetxt = (char*) malloc(sizeof(char) *(strlen(bases) + 1));
                 stpcpy(basetxt, bases);
 
-                MPI_Send( & bases_lenght, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
-                MPI_Send(basetxt, bases_lenght + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
+                MPI_Send(&bases_length, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+                MPI_Send(basetxt, bases_length + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
             }
-            //PREENCHE A LISTA DE RESPOSTA COM TODAS AS QUERYS NOT FOUND PARA FACILITAR PROCESSAMENTO
+
+            /* preenche lista de respostas com todas as queries como NOT FOUND para facilitar o processamento */
             if (resposta == NULL) {
                 resposta = (Resp*) malloc(sizeof(Resp*));
                 resposta->query = (char*) malloc(sizeof(char) *(strlen(desc_query) + 2));
                 stpcpy(resposta->query, desc_query);
                 resposta->next = NULL;
-                resposta->descricao = (char*) malloc(sizeof(char) *12);
-                strcpy(resposta->descricao, "NOT FOUND\0\n");
+                resposta->descricao = (char*) malloc(sizeof(char) * 12);
+                strcpy(resposta->descricao, "NOT FOUND\n");
             } else {
-                pushResp(resposta, desc_query, "NOT FOUND\0\n");
+                pushResp(resposta, desc_query, "NOT FOUND\n");
             }
             dnasQuery++;
         }
@@ -348,43 +370,43 @@ int main(int argc, char **argv) {
         int aux2Size = strlen(aux2);
         //ENVIA UMA MENSAGEM AVISANDO QUE O PROCESSO DE ENVIO ACABOU
         for (int source = 1; source < np; source++) {
-            MPI_Send( & aux1Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+            MPI_Send(&aux1Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
             MPI_Send(aux1, aux1Size + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
-            MPI_Send( & index, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+            MPI_Send(&index, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
 
-            MPI_Send( & aux2Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+            MPI_Send(&aux2Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
             MPI_Send(aux2, aux2Size + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
         }
         free(aux1);
         free(aux2);
-        PrintaLista(resposta);
+        // PrintaLista(resposta);
     } else {
         while (1) {
             //FICA EM LOOP ESPERANDO RECEBER INFORMACOES DA MASTER
             DNA *query = (DNA*) malloc(sizeof(DNA));
             int index;
             int desc_length;
-            int bases_lenght;
+            int bases_length;
 
             //RECEIVE DA DESCRICAO
-            MPI_Recv( & desc_length, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
+            MPI_Recv(&desc_length, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
             char *descricao = (char*) malloc(desc_length + 1);
             MPI_Recv(descricao, desc_length + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, & status);
             strcpy(query->descricao, descricao);
 
             //RECEIVE DO INDEX
-            MPI_Recv( & index, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
+            MPI_Recv(&index, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
 
             query->index = index;
 
             //RECEIVE DO CONTEUDO
-            MPI_Recv( & bases_lenght, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
+            MPI_Recv(&bases_length, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
 
-            char *conteudo = (char*) malloc(bases_lenght + 1);
-            MPI_Recv(conteudo, bases_lenght + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, & status);
+            char *conteudo = (char*) malloc(bases_length + 1);
+            MPI_Recv(conteudo, bases_length + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, & status);
 
-            query->conteudo = (char*) malloc(bases_lenght + 1);
+            query->conteudo = (char*) malloc(bases_length + 1);
             stpcpy(query->conteudo, conteudo);
 
             //CRITERIO DE PARADA 
@@ -456,9 +478,9 @@ int main(int argc, char **argv) {
                 char *stringprocess = (char*) malloc(tamanho + 1);
                 slice_str(linha, stringprocess, temp, temp + tamanho);
                 //ENVIO DO OFFSET PARA CALCULO DO RESULT
-                MPI_Send( & temp, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
+                MPI_Send(&temp, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
                 //ENVIO DO TAMANHO DA STRING
-                MPI_Send( & tamanho, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
+                MPI_Send(&tamanho, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
                 //ENVIO DA STRING
                 MPI_Send(stringprocess, tamanho, MPI_CHAR, i, tag, MPI_COMM_WORLD);
 
@@ -470,14 +492,14 @@ int main(int argc, char **argv) {
                 int detalhesize;
 
                 //ESPERA A INFORMACAO DE QUALQUER PROCESSO
-                MPI_Recv( & result, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+                MPI_Recv(&result, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
 
                 //AO CHEGAR UMA INFORMACAO O PROCESSO SEGUE A PARTIR DE UM SOURCE 
-                MPI_Recv( & detalhesize, 1, MPI_INT, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+                MPI_Recv(&detalhesize, 1, MPI_INT, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
 
                 char *detalheRecv = (char*) malloc(detalhesize + 1);
                 MPI_Recv(detalheRecv, detalhesize + 1, MPI_CHAR, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
-                printf("REQUESTER: %d, TAG: %d, RESULT: %d ,detalheRecv: %s\n", status.MPI_SOURCE, status.MPI_TAG, result, detalheRecv);
+                // printf("REQUESTER: %d, TAG: %d, RESULT: %d ,detalheRecv: %s\n", status.MPI_SOURCE, status.MPI_TAG, result, detalheRecv);
 
                 //SE TUDO OK ATUALIZA A LISTA
                 if (status.MPI_TAG == 200) {
@@ -517,15 +539,15 @@ int main(int argc, char **argv) {
 
             }
             //PROX ELEMENTO
-            PrintaLista(resposta);
+            //PrintaLista(resposta);
             current = current->next;
         }
         //ENVIA A INFORMACAO PARA OS OUTROS PROCESSOS PARA AVISAR DO FIM DO PROCESSO
         for (int i = 1; i < np; i++) {
             int tamanho = 0;
             char *stringprocess = (char*) malloc(sizeof(char));
-            MPI_Send( & tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-            MPI_Send( & tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            MPI_Send(&tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            MPI_Send(&tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
             MPI_Send(stringprocess, tamanho, MPI_CHAR, i, 0, MPI_COMM_WORLD);
         }
         ImprimeSaida(resposta);
@@ -536,9 +558,9 @@ int main(int argc, char **argv) {
             int offset;
             //ESPERA INFORMACAO DO MASTER MAS DE QUALQUER TAG
             //RECEBE O OFFSET
-            MPI_Recv( & offset, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+            MPI_Recv(&offset, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
             //RECEBE O TAMANHO
-            MPI_Recv( & tam, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+            MPI_Recv(&tam, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
 
             //RECEBE O CONTEUDO DA SUBSTRING BASE
             char *base = (char*) malloc(tam + 1);
@@ -564,16 +586,16 @@ int main(int argc, char **argv) {
                 //QUANDO ACHA UMA INFORMACAO ENVIA PARA A MASTER
                 if (result > 0) {
                     result += offset;
-                    MPI_Send( & result, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
-                    MPI_Send( & desc_size, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+                    MPI_Send(&result, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+                    MPI_Send(&desc_size, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
                     MPI_Send(detalheSend, desc_size + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD);
                 }
                 free(detalheSend);
                 current = current->next;
             }
             //AVISA QUE ACABOU O PROCESSAMENTO DAS QUERYS
-            MPI_Send( & result, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
-            MPI_Send( & desc_size, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+            MPI_Send(&result, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+            MPI_Send(&desc_size, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
             MPI_Send(detalheSend, desc_size + 1, MPI_CHAR, 0, 100, MPI_COMM_WORLD);
         }
     }
