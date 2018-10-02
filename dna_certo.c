@@ -110,9 +110,6 @@ void liberaLista(ListaDNA *head) {
 char *substring(char *string, int position, int length) {
 	char *pointer;
 	int c;
-	printf("substring1: %s\n",string);
-	printf("position: %d\n",position);
-	printf("length: %d\n",length);
 	
 	pointer = malloc(length + 1);
 
@@ -127,7 +124,7 @@ char *substring(char *string, int position, int length) {
 	}
 
 	*(pointer + c) = '\0';
-	printf("substring2: %s\n",pointer);
+	
 	return pointer;
 }
 
@@ -455,7 +452,7 @@ int main(int argc, char **argv) {
 			int size = strlen(dnaBase->conteudo);
 			char* linha = (char*)malloc(size+1); 
 			strcat(linha,dnaBase->conteudo);
-			//printf("STRINGAO: %s\n",linha);
+		
 			int tam = size/(np-1);
 			//DIVIDE A STRING DA BASE E ENVIA AO PROCESSOS
 			for (int i = 1; i < np; i++) {
@@ -476,7 +473,7 @@ int main(int argc, char **argv) {
 				
 			}
 			//EFETUA O RECEIVE DAS INFORMACAO E PROCESSAMENTO DA MESMA
-			for(int i =1;i<np; i++){
+			for(int i =1;i<np; ){
 				
 				int result;
 				int detalhesize;
@@ -490,13 +487,13 @@ int main(int argc, char **argv) {
 				char *  detalheRecv = (char*) malloc(detalhesize+1);
 				MPI_Recv(detalheRecv,detalhesize+ 1, MPI_CHAR, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 				printf("REQUESTER: %d, TAG: %d, RESULT: %d ,detalheRecv: %s\n",status.MPI_SOURCE,status.MPI_TAG,result,detalheRecv);
-				//printf("RETORNO DA detalheRecv: %s",detalheRecv);
+				
 				//SE TUDO OK ATUALIZA A LISTA
 				if (status.MPI_TAG ==200) {
 					if(resposta == NULL){
-						printf("1\n");
+					
 						resposta = (Resp*) malloc(sizeof(Resp*));
-						printf("1.1\n");
+					
 						resposta->query = (char*) malloc(sizeof(char)* (strlen(detalheRecv)+2));
 						stpcpy(resposta->query,detalheRecv);
 						
@@ -507,53 +504,30 @@ int main(int argc, char **argv) {
 						strcat(resposta->descricao,"\n");
 						strcat(resposta->descricao,strResult);
 						resposta->next = NULL;
-						PrintaLista(resposta);
+						
 					}
 					else{
-						printf("2\n");
+					
 						char strResult[12];
 						sprintf(strResult, "%d", result);
-						printf("2.1\n");
+					
 						char * descricao = (char*) malloc(sizeof(char)*(strlen(dnaBase->descricao)+strlen(strResult)+2));
-						printf("2.2\n");
+					
 						strcat(descricao,dnaBase->descricao);
 						strcat(descricao,"\n");
 						strcat(descricao,strResult);
 						
 						pushResp(resposta,detalheRecv,descricao);
-						PrintaLista(resposta);
+						
 					}
-					//printf("%s\n%s\n%d\n", detalheRecv, dnaBase->descricao, result);
-					//fprintf(fout, "%s\n%s\n%d\n", detalheRecv, dnaBase->descricao, result);
+					//TAG QUE AVISA A MASTER QUE UM PROCESSO ACABOU O PROCESSAMENTO DA SUBSTRING BASE
+				}else if(status.MPI_TAG == 100){
+					i++;
 				}
-				//SE NAO ESTIVER OK ATUALIZA A LISTA, NAO NECESSARIO 
-				/*else{
-					if(resposta == NULL){
-						printf("3\n");
-						resposta = (Resp*) malloc(sizeof(Resp*));
-						resposta->query = (char*) malloc(sizeof(char)* (strlen(detalheRecv)+2));
-						stpcpy(resposta->query,detalheRecv);
-						resposta->descricao = (char*) malloc(sizeof(char)*12);
-						strcat(resposta->descricao,"NOT FOUND\0\n");
-						resposta->next = NULL;
-						PrintaLista(resposta);
-					}
-					else{
-						printf("4\n");
-						char * descricao = (char*) malloc(sizeof(char)*12);
-						printf("4.1\n");
-						strcat(descricao,"NOT FOUND\0\n");
-						printf("4.2\n");
-						printf("detalheRecv: %s",detalheRecv);
-						pushResp(resposta,detalheRecv,descricao);
-						PrintaLista(resposta);
-					}
-					
-				}*/
-				//printf("REQUESTER: %d, FINALIZED %d \n",status.MPI_SOURCE,i);
 				
 			}
 			//PROX ELEMENTO
+			PrintaLista(resposta);
 			current = current->next;
 		}
 		//ENVIA A INFORMACAO PARA OS OUTROS PROCESSOS PARA AVISAR DO FIM DO PROCESSO
@@ -598,33 +572,21 @@ int main(int argc, char **argv) {
 				desc_size = strlen(dnaQuery->descricao);
 				detalheSend = (char*) malloc(desc_size+1);
 				stpcpy(detalheSend,dnaQuery->descricao);
-				//printf("base ANTES DA PROCURA: %s\n",base);
-				//printf("dnaQuery->conteudo ANTES DA PROCURA: %s\n",dnaQuery->conteudo);
 				result = bmhs(base, strlen(base), dnaQuery->conteudo, strlen(dnaQuery->conteudo));
-				
+				//QUANDO ACHA UMA INFORMACAO ENVIA PARA A MASTER
 				if(result>0){
-					break;
+					result += offset;
+					MPI_Send(&result, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+					MPI_Send(&desc_size, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+					MPI_Send(detalheSend, desc_size+1, MPI_CHAR, 0, tag, MPI_COMM_WORLD);
 				}
 				free(detalheSend);
 				current = current->next;
 			}
-		
-			if (result > 0) {			
-				result += offset;
-				MPI_Send(&result, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
-				MPI_Send(&desc_size, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
-				MPI_Send(detalheSend, desc_size+1, MPI_CHAR, 0, tag, MPI_COMM_WORLD);
-			}
-			else {
-				int i = 0;
-				
-				MPI_Send(&i, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-				MPI_Send(&desc_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-				char * detalheSend = (char*) malloc(desc_size+1);
-				
-				MPI_Send(detalheSend, desc_size+1, MPI_CHAR, 0, 0, MPI_COMM_WORLD);
-				free(detalheSend);
-			}
+			//AVISA QUE ACABOU O PROCESSAMENTO DAS QUERYS
+			MPI_Send(&result, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+			MPI_Send(&desc_size, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+			MPI_Send(detalheSend, desc_size+1, MPI_CHAR, 0, 100, MPI_COMM_WORLD);
 		}
 	}
 
