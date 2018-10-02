@@ -258,7 +258,7 @@ int main(int argc, char **argv) {
 				break;
 		}
 	}
-/*
+
 	// PROCESSO 0 CRIA A LISTA DE BASES
 	if (my_rank == 0) {
 		while (!feof(fdatabase)) {
@@ -268,7 +268,7 @@ int main(int argc, char **argv) {
 			} else{
 				fgets(desc_dna, 80, fdatabase);
 			}
-
+			printf("String %s\n", line);
 			DNA * base = (DNA*) malloc(sizeof(DNA));
 			base->index = dnasBase++;
 			//EFETUA A LEITURA
@@ -276,24 +276,28 @@ int main(int argc, char **argv) {
 			strcpy(base->descricao, desc_dna);
 
 			fgets(line, 80, fdatabase);
+			printf("String2 %s\n", line);
 			remove_eol(line);
 			//VARIAVEL DO DNA CORRENTE
 			bases[0] = 0;
 			i = 0;
 			while (line[0] != '>')
 			{
+				printf("String3 %s\n", line);
 				strcat(bases, line);
 				if (fgets(line, 80, fdatabase) == NULL)
 					break;
 				remove_eol(line);
 				i += 80;
 			}
+			printf("LOOP\n");
 			base->conteudo = (char *)malloc(sizeof(char)*strlen(bases));
 			strcpy(base->conteudo, bases);
 			push(listaBase,base);
 		}
 	}
-	
+	printf("FIMLOOP\n");
+	/*
 	if (my_rank == 0)
 	{
 		int sends = 0;
@@ -380,13 +384,15 @@ int main(int argc, char **argv) {
 		}
 	}
 */
-	if (my_rank == 0)
+	if (my_rank == 0){
 		closefiles();
+		free(bases);
+		liberaLista(ListaQuery);
+		liberaLista(listaBase);
+	}
+	printf("CACETE DE AGULHA");
 
-	free(bases);
-	liberaLista(ListaQuery);
-	liberaLista(listaBase);
-
+	
 	MPI_Type_free(&mpi_dna_type);
 	MPI_Finalize();
 
