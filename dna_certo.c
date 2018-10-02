@@ -249,10 +249,10 @@ int main(int argc, char **argv) {
 
 	else {
 		while (1) {
-			DNA *query;
-			MPI_Recv(&query, 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, &status);
-			if (query->index != -1)
-				push(ListaQuery, query);
+			DNA query ;
+			MPI_Recv(&query, 1, mpi_dna_type, 0, tag, MPI_COMM_WORLD, &status);
+			if (query.index != -1)
+				push(ListaQuery, &query);
 			
 			else
 				break;
