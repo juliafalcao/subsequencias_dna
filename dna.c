@@ -1,389 +1,587 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <mpi.h>
+#include < stdio.h > #include < stdlib.h > #include < stddef.h > #include < string.h > #include < mpi.h >
 
-// MAX char table (ASCII)
-#define MAX 256
+    // MAX char table (ASCII)
+    #define MAX 256
 
-#define MAX_STRING_LENGTH 10000
-#define MAX_QUERY_LENGTH 100
+// estrutura que armazena um registro de DNA obtido de um arquivo FASTA
+typedef struct DNA_s {
+    char descricao[80];
+    int index; // índice sequencial dentro do arquivo
+    char * conteudo;
+}
+DNA;
 
-#define DISTRIBUTION_TAG 0
-#define QUERY_SEND_TAG 1
-#define PART_SEND_TAG 2
-#define RESULT_TAG 3
+// elemento de uma lista encadeada de estruturas DNA
+typedef struct ListaDNA_s {
+    DNA * dna;
+    struct ListaDNA_s * next;
+}
+ListaDNA;
 
-#define QUERY_INDEX 0
-#define QUERY_SIZE 1
-#define POSITION 1
-#define STRING_INDEX 2
-#define PART_SIZE 3
+//LISTA COM A ARQUITETURA DO ARQUIVO
+typedef struct resp_s {
+    char * query;
+    char * descricao;
+    struct resp_s * next;
+}
+Resp;
 
-#define MASTER 0
-
-
-typedef struct s_string {
-	char description[80];
-	char* string;
-	int index;
-	struct s_string *next; // ponteiro para o próximo de uma lista encadeada
-} String;
-
-typedef struct s_query {
-	char description[80];
-	char* substring;
-	int index;
-	struct s_query *next;
-} Query;
-
-typedef struct s_result {
-	String *database;
-	Query *query;
-	int pos; // position (já com offset)
-	struct s_result *next;
-} Result;
-
-
-Result* insert_result(Result *first, Result *new_result) {
-	if (first == NULL) return new_result;
-	Result *atual = first;
-	while (atual->next != NULL) atual = atual->next;
-	atual->next = new_result;
-	return first;
+//METODO PARA INSERIR NO ARQUIVO SEGUINDO OS CRITERIOS DESCRITOS
+//INSERE SE NAO EXISTIR QUERY
+//SE HOUVER QUERY VERIFICA SE EH NOT FOUND E SUBSTITUI SE NECESSARIO
+void pushResp(Resp * head, char * query, char * descricao) {
+    Resp * current = head;
+    //PERCORRE A LISTA
+    while (current - > next != NULL) {
+        //COMPARA SE EH UMA QUERY NOVA OU NAO
+        if (strcmp(current - > query, query) == 0) {
+            //COMPARA SE EH AINDA EH NOT FOUND OU NAO
+            if (strstr(current - > descricao, "NOT FOUND\0\n") != NULL) {
+                current - > descricao[0] = 0;
+            }
+            int size = strlen(current - > descricao) + strlen(descricao) + 2;
+            //REALOCA VETOR PARA CONCATENAR MAIS INFOS
+            current - > descricao = (char * ) realloc(current - > descricao, sizeof(char) * (strlen(current - > descricao) + strlen(descricao) + 2));
+            strcat(current - > descricao, "\n");
+            strcat(current - > descricao, descricao);
+            return;
+        }
+        current = current - > next;
+    }
+    //CASO NAO EXISTA INSERE UM NOVO
+    current - > next = (Resp * ) malloc(sizeof(Resp));
+    current - > next - > query = (char * ) malloc(sizeof(char) * (strlen(query) + 1));
+    stpcpy(current - > next - > query, query);
+    current - > next - > descricao = (char * ) malloc(sizeof(char) * (strlen(descricao) + 1));
+    stpcpy(current - > next - > descricao, descricao);
+    current - > next - > next = NULL;
+}
+//FREE
+void liberaListaResp(Resp * head) {
+    while (head != NULL) {
+        free(head - > descricao);
+        free(head - > query);
+        Resp * anterior = head;
+        head = head - > next;
+        free(anterior);
+    }
 }
 
-String* insert_database(String *first, String *new_database) {
-	if (first == NULL) return new_database;
-	String *atual = first;
-	while (atual->next != NULL) atual = atual->next;
-	atual->next = new_database;
-	return first;
+void push(ListaDNA * head, DNA * val) {
+    if (head - > dna == NULL) {
+        head - > dna = val;
+        head - > next = NULL;
+    } else {
+        ListaDNA * current = head;
+        while (current - > next != NULL) {
+            current = current - > next;
+        }
+        current - > next = (ListaDNA * ) malloc(sizeof(ListaDNA));
+        current - > next - > dna = val;
+        current - > next - > next = NULL;
+    }
+
 }
 
-Query* insert_query(Query *first, Query *new_query) {
-	if (first == NULL) return new_query;
-	Query *atual = first;
-	while (atual->next != NULL) atual = atual->next;
-	atual->next = new_query;
-	return first;
+DNA * getElement(ListaDNA * head, int index) {
+    ListaDNA * current = head;
+    int temp = 0;
+    while (current != NULL) {
+        if (temp = index) {
+            return current - > dna;
+        }
+
+        current = current - > next;
+        temp++;
+    }
 }
 
-void free_results(Result* first) {
-	/*if (first == NULL) return;
-	free_results(first->next);
-	free(first->database->string);
-	free(first->query->substring);
-	free(first->database);
-	free(first->query);
-	free(first); */
-
-	Result *ant, *atual;
-	atual = first;
-
-	while (atual != NULL) {
-		ant = atual;
-		atual = atual->next;
-		free(ant->database->string);
-		free(ant->query->substring);
-		free(ant->database);
-		free(ant->query);
-		free(ant);
-	}
+void liberaLista(ListaDNA * head) {
+    while (head != NULL) {
+        free(head - > dna);
+        ListaDNA * anterior = head;
+        head = head - > next;
+        free(anterior);
+    }
 }
 
-// Boyers-Moore-Hospool-Sunday algorithm for string matching
-int bmhs(char *string, int n, char *substr, int m) {
+char * substring(char * string, int position, int length) {
+    char * pointer;
+    int c;
 
-	int d[MAX];
-	int i, j, k;
+    pointer = malloc(length + 1);
 
-	// pre-processing
-	for (j = 0; j < MAX; j++)
-		d[j] = m + 1;
-	for (j = 0; j < m; j++)
-		d[(int) substr[j]] = m - j;
+    if (pointer == NULL) {
+        printf("Unable to allocate memory.\n");
+        exit(1);
+    }
 
-	// searching
-	i = m - 1;
-	while (i < n) {
-		k = i;
-		j = m - 1;
-		while ((j >= 0) && (string[k] == substr[j])) {
-			j--;
-			k--;
-		}
-		if (j < 0)
-			return k + 1; // se encontrou, retorna posição
-		i = i + d[(int) string[i + 1]];
-	}
+    for (c = 0; c < length; c++) {
+        *(pointer + c) = * (string + position - 1);
+        string++;
+    }
 
-	return -1; // se não encontrou
-}
+    *(pointer + c) = '\0';
 
-FILE *fdatabase, *fquery, *fout;
-
-void openfiles() {
-	fdatabase = fopen("dna.in", "r+");
-	if (fdatabase == NULL) {
-		perror("dna.in");
-		exit(EXIT_FAILURE);
-	}
-
-	fquery = fopen("query.in", "r");
-	if (fquery == NULL) {
-		perror("query.in");
-		exit(EXIT_FAILURE);
-	}
-
-	fout = fopen("dna.out", "w");
-	if (fout == NULL) {
-		perror("fout");
-		exit(EXIT_FAILURE);
-	}
-}
-
-void closefiles() {
-	fflush(fdatabase);
-	fclose(fdatabase);
-
-	fflush(fquery);
-	fclose(fquery);
-
-	fflush(fout);
-	fclose(fout);
-}
-
-void remove_eol(char *line) {
-	int i = strlen(line) - 1;
-	while (line[i] == '\n' || line[i] == '\r') {
-		line[i] = 0;
-		i--;
-	}
+    return pointer;
 }
 
 /* função que recebe uma string e preenche o buffer com a substring de start até end */
-void slice_str(const char *str, char *buffer, size_t start, size_t end) {
-	size_t j = 0;
-	for (size_t i = start; i <= end; ++i) {
-		buffer[j++] = str[i];
-	}
+void slice_str(const char * str, char * buffer, size_t start, size_t end) {
+    size_t j = 0;
+    for (size_t i = start; i <= end; ++i) {
+        buffer[j++] = str[i];
+    }
 
-	buffer[j] = 0;
+    buffer[j] = 0;
 }
 
-char *database_str;
-char *query_str;
+// Boyers-Moore-Hospool-Sunday algorithm for string matching
+int bmhs(char * string, int n, char * substr, int m) {
 
+    int d[MAX];
+    int i, j, k;
 
-int main(int argc, char** argv) {
-	MPI_Init(&argc, &argv);
+    // pre-processing
+    for (j = 0; j < MAX; j++)
+        d[j] = m + 1;
+    for (j = 0; j < m; j++)
+        d[(int) substr[j]] = m - j;
 
-	int my_rank, np, tag = 0;
-	MPI_Status status;
+    // searching
+    i = m - 1;
+    while (i < n) {
+        k = i;
+        j = m - 1;
+        while ((j >= 0) && (string[k] == substr[j])) {
+            j--;
+            k--;
+        }
 
-	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &np); // número de processos
+        if (j < 0)
+            return k + 1;
+        i = i + d[(int) string[i + 1]];
+    }
 
-	if (my_rank == MASTER) { // processo coordenador
-		Result* results = NULL; // lista encadeada de resultados, recebidos dos outros processos
+    return -1;
+}
 
-		/* buffers para leitura de databases e queries */
-		database_str = (char*) malloc(sizeof(char) * MAX_STRING_LENGTH);
-		if (database_str == NULL) {
-			perror("database malloc");
-			exit(EXIT_FAILURE);
-		}
+FILE * fdatabase, * fquery, * fout;
 
-		query_str = (char*) malloc(sizeof(char) * MAX_QUERY_LENGTH);
-		if (query_str == NULL) {
-			perror("query malloc");
-			exit(EXIT_FAILURE);
-		}
+void openfiles() {
 
-		openfiles();
+    fdatabase = fopen("dna.in", "r+");
+    if (fdatabase == NULL) {
+        perror("dna.in");
+        exit(EXIT_FAILURE);
+    }
 
-		String* database = (String*) malloc(sizeof(String));
-		if (database == NULL) {
-			perror("malloc database");
-			exit(EXIT_FAILURE);
-		}
+    fquery = fopen("query.in", "r");
 
-		Query* query = (Query*) malloc(sizeof(Query));
-		if (query == NULL) {
-			perror("malloc query");
-			exit(EXIT_FAILURE);
-		}
+    if (fquery == NULL) {
+        perror("query.in");
+        exit(EXIT_FAILURE);
+    }
 
-		database->string = (char*) malloc(sizeof(char) * MAX_STRING_LENGTH);
-		query->substring = (char*) malloc(sizeof(char) * MAX_QUERY_LENGTH);
+    fout = fopen("dna.out", "w");
 
-		char line[100];
+    if (fout == NULL) {
+        perror("fout");
+        exit(EXIT_FAILURE);
+    }
+}
 
-		/* leitura do arquivo de queries */
-		fseek(fquery, 0, SEEK_SET);
+void closefiles() {
+    fflush(fdatabase);
+    fclose(fdatabase);
 
-		while (!feof(fquery)) {
-			fgets(line, 100, fquery);
-			remove_eol(line);
+    fflush(fquery);
+    fclose(fquery);
 
-			if (line[0] == '>') // salvar descrição da query
-				strcpy(query->description, line);
+    fflush(fout);
+    fclose(fout);
+}
 
-			fgets(line, 100, fquery);
-			remove_eol(line);
+void remove_eol(char * line) {
+    int i = strlen(line) - 1;
+    while (line[i] == '\n' || line[i] == '\r') {
+        line[i] = 0;
+        i--;
+    }
+}
 
-			if (strlen(line) == 0) break;
+void ImprimeSaida(Resp * head) {
+    while (head != NULL) {
+        fprintf(fout, "%s\n", head - > query);
+        fprintf(fout, "%s\n", head - > descricao);
+        head = head - > next;
+    }
+}
+void PrintaLista(Resp * head) {
+    printf("-----------------\n");
+    while (head != NULL) {
+        printf("%s\n", head - > query);
+        printf("%s\n", head - > descricao);
+        head = head - > next;
+    }
+    printf("-----------------\n");
+}
 
-			strcpy(query->substring, line); // salvar conteúdo da query
+int main(int argc, char ** argv) {
+    int my_rank, np; // rank e número de processos
+    int tag = 200;
+    int dnasQuery = 0;
+    int dnasBase = 0;
+    int resto = 0;
 
+    //INICIALIZA MPI
+    MPI_Status status;
+    MPI_Init( & argc, & argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, & my_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, & np);
 
-			/* leitura do arquivo de strings */
-			fseek(fdatabase, 0, SEEK_SET);
-			int cur = 0;
-			int found = 0;
+    //LISTA ENCADEADA COM A INFORMAÇAO DOS ARQUIVOS
+    ListaDNA * ListaQuery = (ListaDNA * ) malloc(sizeof(ListaDNA));
+    ListaQuery - > next = NULL;
+    ListaQuery - > dna = NULL;
+    ListaDNA * listaBase = (ListaDNA * ) malloc(sizeof(ListaDNA));
+    listaBase - > next = NULL;
+    listaBase - > dna = NULL;
+    Resp * resposta = NULL;
 
-			while (!feof(fdatabase)) {
-				fgets(line, 100, fdatabase);
-				remove_eol(line);
+    //BUFFER DE LEITURA COM O TAMANHO MAXIMO POSSIVEL DO ARQUIVO
+    char * bases = (char * ) malloc(sizeof(char) * 1000001);
+    if (bases == NULL) {
+        perror("malloc bases");
+        exit(EXIT_FAILURE);
+    }
 
-				if (line[0] == '>')
-					strcpy(database->description, line); // salvar descrição da string
+    //SOMENTE O PROCESSO 0 FAZ A LEITURA DOS ARQUIVOS
+    if (my_rank == 0) {
+        openfiles();
+    }
+    char desc_dna[80], desc_query[80];
+    char line[80];
+    int i, found, result;
 
-				strcpy(database_str, "");
-				char* first = (char*) malloc(sizeof(char) * 2);
+    //LEITURA DO ARQUIVO DE QUERY E CRIAÇAO DA LISTA DE QUERY
+    if (my_rank == 0) {
+        while (!feof(fquery)) {
+            if (line[0] == '>') {
+                strcpy(desc_query, line);
+            } else {
+                fgets(desc_query, 80, fquery);
+            }
+            //INICIALIZA STRUCT
+            DNA * query = (DNA * ) malloc(sizeof(DNA));
+            query - > index = dnasQuery;
+            remove_eol(desc_query);
+            strcpy(query - > descricao, desc_query);
+            //COMEÇA A LEITURA DO CONTEUDO DO ARQUIVO
+            fgets(line, 80, fquery);
+            remove_eol(line);
+            bases[0] = 0;
+            i = 0;
+            while (line[0] != '>') {
+                strcat(bases, line);
+                if (fgets(line, 80, fquery) == NULL)
+                    break;
+                remove_eol(line);
+                i += 80;
+            }
 
-				while (!feof(fdatabase)) { // loop para ler as linhas da string
-					cur = ftell(fdatabase);
-					fgets(first, 2, fdatabase);
-					fseek(fdatabase, cur, SEEK_SET);
+            query - > conteudo = (char * ) malloc(sizeof(char) * strlen(bases));
+            strcpy(query - > conteudo, bases);
 
-					if (first[0] != '>') {
-						fgets(line, 100, fdatabase);
-						remove_eol(line);
-						strcat(database_str, line);
-					}
+            //Atualiza o resto
+            int temp = strlen(query - > conteudo);
+            if (temp > resto) {
+                resto = temp;
+            }
+            //ATUALIZA LISTA
+            push(ListaQuery, query);
+            //ENVIA A INFORMACAO PARA OS OUTROS PROCESSOS
+            for (int source = 1; source < np; source++) {
 
-					else
-						break;
-				}
+                int desc_lenght = strlen(desc_query);
+                char * desc = (char * ) malloc(sizeof(char) * (strlen(desc_query) + 1));
+                stpcpy(desc, desc_query);
 
-				if (strlen(database_str) == 0) break;
-				strcpy(database->string, database_str); // salvar conteúdo da string
+                //SEND DA DESCRICAO
+                MPI_Send( & desc_lenght, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+                MPI_Send(desc, desc_lenght + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
-				int n = strlen(database->string);
-				int m = strlen(query->substring);
-				int margem = m-1;
-				size_t ini, fim;
-				char part[n+1];
+                //SEND DO INDEX
+                MPI_Send( & dnasQuery, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
 
-				/* distribuição de partes para os outros processos */
-				int i;
-				size_t pos = 0;
+                int bases_lenght = strlen(bases);
+                char * basetxt = (char * ) malloc(sizeof(char) * (strlen(bases) + 1));
+                stpcpy(basetxt, bases);
 
-				size_t ini_offsets[np];
-				ini_offsets[MASTER] = 0; // para usar na hora do retorno
+                MPI_Send( & bases_lenght, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+                MPI_Send(basetxt, bases_lenght + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
-				for (i = 1; i < np; i++) { // loop para os outros processos
-					if (i == 1) { // primeiro processo
-						ini = pos;
-						pos += (n / np) + margem;
-						fim = pos;
-					} else if (i < np - 1) { // processos entre primeiro e o último
-						ini = pos - margem;
-						fim = pos + n / np;
-						pos += n / np;
-					} else { // último processo
-						ini = pos - margem;
-						fim = (size_t) n - 1;
-						pos += n / np;
-					}
+            }
+            //PREENCHE A LISTA DE RESPOSTA COM TODAS AS QUERYS NOT FOUND PARA FACILITAR PROCESSAMENTO
+            if (resposta == NULL) {
+                resposta = (Resp * ) malloc(sizeof(Resp * ));
+                resposta - > query = (char * ) malloc(sizeof(char) * (strlen(desc_query) + 2));
+                stpcpy(resposta - > query, desc_query);
+                resposta - > next = NULL;
+                resposta - > descricao = (char * ) malloc(sizeof(char) * 12);
+                strcpy(resposta - > descricao, "NOT FOUND\0\n");
+            } else {
+                pushResp(resposta, desc_query, "NOT FOUND\0\n");
+            }
+            dnasQuery++;
+        }
 
-					ini_offsets[i] = ini; // guarda offset
+        int index = -1;
+        char * aux1 = (char * ) malloc(sizeof(char));
+        int aux1Size = strlen(aux1);
+        char * aux2 = (char * ) malloc(sizeof(char));
+        int aux2Size = strlen(aux2);
+        //ENVIA UMA MENSAGEM AVISANDO QUE O PROCESSO DE ENVIO ACABOU
+        for (int source = 1; source < np; source++) {
+            MPI_Send( & aux1Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+            MPI_Send(aux1, aux1Size + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
 
-					slice_str(database->string, part, ini, fim);
-					int info[4] = {query->index, strlen(query->substring), database->index, strlen(database->string)};
-					int part_size = (int) strlen(part);
-					MPI_Send(&info, 4, MPI_INT, i, DISTRIBUTION_TAG, MPI_COMM_WORLD);
-					MPI_Send(query->substring, strlen(query->substring), MPI_CHAR, i, QUERY_SEND_TAG, MPI_COMM_WORLD); // envia query
-					MPI_Send(&part_size, 1, MPI_INT, i, PART_SEND_TAG, MPI_COMM_WORLD); // envia pedaço
-				}
+            MPI_Send( & index, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
 
-			} // fim da leitura das databases
+            MPI_Send( & aux2Size, 2, MPI_INT, source, tag, MPI_COMM_WORLD);
+            MPI_Send(aux2, aux2Size + 1, MPI_CHAR, source, tag, MPI_COMM_WORLD);
+        }
+        free(aux1);
+        free(aux2);
+        PrintaLista(resposta);
+    } else {
+        while (1) {
+            //FICA EM LOOP ESPERANDO RECEBER INFORMACOES DA MASTER
+            DNA * query = (DNA * ) malloc(sizeof(DNA));
+            int index;
+            int desc_length;
+            int bases_lenght;
 
-			if (!found) {
-				// adicionar um Result dummy com valor -1 pra poder printar o NOT FOUND depois
-				Result* result = (Result*) malloc(sizeof(Result));
-				if (result == NULL) { perror("malloc result\n"); exit(EXIT_FAILURE); }
-				result->database = NULL;
-				result->query = query;
-				result->pos = -1;
+            //RECEIVE DA DESCRICAO
+            MPI_Recv( & desc_length, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
+            char * descricao = (char * ) malloc(desc_length + 1);
+            MPI_Recv(descricao, desc_length + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, & status);
+            strcpy(query - > descricao, descricao);
 
-				results = insert_result(results, result);
-			}
-		} // fim da leitura das queries
+            //RECEIVE DO INDEX
+            MPI_Recv( & index, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
 
-		int result_info[3];
-		int i;
+            query - > index = index;
 
-		for (i = 1; i < np; i++) {
-			MPI_Recv(&result_info, 3, MPI_INT, MPI_ANY_SOURCE, RESULT_TAG, MPI_COMM_WORLD, &status);
-			printf("recebeu ALGUMA mensagem\n");
+            //RECEIVE DO CONTEUDO
+            MPI_Recv( & bases_lenght, 2, MPI_INT, 0, tag, MPI_COMM_WORLD, & status);
 
-			if (result_info[POSITION] != -1) {
-				// found = 1;
-				Result* result = (Result*) malloc(sizeof(Result));
-				if (result == NULL) { perror("malloc result\n"); exit(EXIT_FAILURE); }
+            char * conteudo = (char * ) malloc(bases_lenght + 1);
+            MPI_Recv(conteudo, bases_lenght + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD, & status);
 
-				result->database = database;
-				result->query = query;
-				result->pos = result_info[POSITION] /*+ ini_offsets[i]*/;
+            query - > conteudo = (char * ) malloc(bases_lenght + 1);
+            stpcpy(query - > conteudo, conteudo);
 
-				results = insert_result(results, result);
-			}
-		}
+            //CRITERIO DE PARADA 
+            if (query - > index != -1) {
+                push(ListaQuery, query);
+            } else {
+                free(query);
+                break;
+            }
+        }
+    }
 
+    // PROCESSO 0 CRIA A LISTA DE BASES
+    if (my_rank == 0) {
+        while (!feof(fdatabase)) {
 
-		/* percorrer lista de results e printar */
-		Result* atual = results;
-		while (atual != NULL) {
-			printf("%s\t%s\t%d\n", atual->query->description, atual->database->description, atual->pos);
-			atual = atual->next;
-		}
+            if (line[0] == '>') {
+                strcpy(desc_dna, line);
+            } else {
+                fgets(desc_dna, 80, fdatabase);
+            }
 
+            DNA * base = (DNA * ) malloc(sizeof(DNA));
+            base - > index = dnasBase++;
+            //EFETUA A LEITURA
+            remove_eol(desc_dna);
+            strcpy(base - > descricao, desc_dna);
 
-		closefiles();
-		free_results(results);
+            fgets(line, 80, fdatabase);
 
-	} // fim do if do processo master
+            remove_eol(line);
+            //VARIAVEL DO DNA CORRENTE
+            bases[0] = 0;
+            i = 0;
+            while (line[0] != '>') {
 
+                strcat(bases, line);
+                if (fgets(line, 80, fdatabase) == NULL)
+                    break;
+                remove_eol(line);
+                i += 80;
+            }
 
-	else { // outros processos
-		/* recebe query e pedaço da string do processo master */
-		int info[4]; // {query_index, query_size, string_index, part_size}
-		int pos;
+            base - > conteudo = (char * ) malloc(sizeof(char) * strlen(bases));
+            strcpy(base - > conteudo, bases);
+            push(listaBase, base);
+        }
+    }
 
-		MPI_Recv(&info, 4, MPI_INT, MASTER, DISTRIBUTION_TAG, MPI_COMM_WORLD, &status); // recebe info de distribuição
-		int n = info[PART_SIZE];
-		int m = info[QUERY_SIZE];
+    if (my_rank == 0) {
+        ListaDNA * current = listaBase;
+        //PERCORRE A LISTA DE BASES PARA DISTRIBUIR ENTRE OS PROCESSOS
+        while (current != NULL) {
 
-		char query[m];
-		MPI_Recv(&query, m, MPI_CHAR, MASTER, QUERY_SEND_TAG, MPI_COMM_WORLD, &status); // recebe query
+            DNA * dnaBase = current - > dna;
+            int size = strlen(dnaBase - > conteudo);
+            char * linha = (char * ) malloc(size + 1);
+            strcat(linha, dnaBase - > conteudo);
 
-		char part[n];
-		MPI_Recv(&part, n, MPI_CHAR, MASTER, PART_SEND_TAG, MPI_COMM_WORLD, &status); // recebe pedaço
+            int tam = size / (np - 1);
+            //DIVIDE A STRING DA BASE E ENVIA AO PROCESSOS
+            for (int i = 1; i < np; i++) {
 
+                int temp = (i - 1) * tam;
+                int tamanho = tam + resto;
+                if (temp + tamanho > size) {
+                    tamanho = size - temp;
+                }
+                char * stringprocess = (char * ) malloc(tamanho + 1);
+                slice_str(linha, stringprocess, temp, temp + tamanho);
+                //ENVIO DO OFFSET PARA CALCULO DO RESULT
+                MPI_Send( & temp, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
+                //ENVIO DO TAMANHO DA STRING
+                MPI_Send( & tamanho, 1, MPI_INT, i, tag, MPI_COMM_WORLD);
+                //ENVIO DA STRING
+                MPI_Send(stringprocess, tamanho, MPI_CHAR, i, tag, MPI_COMM_WORLD);
 
-		/* faz busca */
-		pos = bmhs(part, n, query, m);
-		int result[3] = {info[QUERY_INDEX], pos, info[STRING_INDEX]};
-		MPI_Send(&result, 3, MPI_INT, MASTER, RESULT_TAG, MPI_COMM_WORLD); // envia resultado pra master
+            }
+            //EFETUA O RECEIVE DAS INFORMACAO E PROCESSAMENTO DA MESMA
+            for (int i = 1; i < np;) {
 
+                int result;
+                int detalhesize;
 
-	} // fim do if dos outros processos
+                //ESPERA A INFORMACAO DE QUALQUER PROCESSO
+                MPI_Recv( & result, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
 
+                //AO CHEGAR UMA INFORMACAO O PROCESSO SEGUE A PARTIR DE UM SOURCE 
+                MPI_Recv( & detalhesize, 1, MPI_INT, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
 
-	MPI_Finalize();
+                char * detalheRecv = (char * ) malloc(detalhesize + 1);
+                MPI_Recv(detalheRecv, detalhesize + 1, MPI_CHAR, status.MPI_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+                printf("REQUESTER: %d, TAG: %d, RESULT: %d ,detalheRecv: %s\n", status.MPI_SOURCE, status.MPI_TAG, result, detalheRecv);
 
-	return EXIT_SUCCESS;
+                //SE TUDO OK ATUALIZA A LISTA
+                if (status.MPI_TAG == 200) {
+                    if (resposta == NULL) {
+
+                        resposta = (Resp * ) malloc(sizeof(Resp * ));
+
+                        resposta - > query = (char * ) malloc(sizeof(char) * (strlen(detalheRecv) + 2));
+                        stpcpy(resposta - > query, detalheRecv);
+
+                        char strResult[12];
+                        sprintf(strResult, "%d", result);
+                        resposta - > descricao = (char * ) malloc(sizeof(char) * (strlen(dnaBase - > descricao) + strlen(strResult) + 2));
+                        strcat(resposta - > descricao, dnaBase - > descricao);
+                        strcat(resposta - > descricao, "\n");
+                        strcat(resposta - > descricao, strResult);
+                        resposta - > next = NULL;
+
+                    } else {
+
+                        char strResult[12];
+                        sprintf(strResult, "%d", result);
+
+                        char * descricao = (char * ) malloc(sizeof(char) * (strlen(dnaBase - > descricao) + strlen(strResult) + 2));
+
+                        strcat(descricao, dnaBase - > descricao);
+                        strcat(descricao, "\n");
+                        strcat(descricao, strResult);
+
+                        pushResp(resposta, detalheRecv, descricao);
+
+                    }
+                    //TAG QUE AVISA A MASTER QUE UM PROCESSO ACABOU O PROCESSAMENTO DA SUBSTRING BASE
+                } else if (status.MPI_TAG == 100) {
+                    i++;
+                }
+
+            }
+            //PROX ELEMENTO
+            PrintaLista(resposta);
+            current = current - > next;
+        }
+        //ENVIA A INFORMACAO PARA OS OUTROS PROCESSOS PARA AVISAR DO FIM DO PROCESSO
+        for (int i = 1; i < np; i++) {
+            int tamanho = 0;
+            char * stringprocess = (char * ) malloc(sizeof(char));
+            MPI_Send( & tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            MPI_Send( & tamanho, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            MPI_Send(stringprocess, tamanho, MPI_CHAR, i, 0, MPI_COMM_WORLD);
+        }
+        ImprimeSaida(resposta);
+    } else {
+        while (1) {
+
+            int tam;
+            int offset;
+            //ESPERA INFORMACAO DO MASTER MAS DE QUALQUER TAG
+            //RECEBE O OFFSET
+            MPI_Recv( & offset, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+            //RECEBE O TAMANHO
+            MPI_Recv( & tam, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+
+            //RECEBE O CONTEUDO DA SUBSTRING BASE
+            char * base = (char * ) malloc(tam + 1);
+            MPI_Recv(base, tam + 1, MPI_CHAR, 0, MPI_ANY_TAG, MPI_COMM_WORLD, & status);
+
+            //CRITERIO DE PARADA
+            if (status.MPI_TAG != 200) {
+                break;
+            }
+
+            ListaDNA * current = ListaQuery;
+            int result = -1;
+            int desc_size;
+            char * detalheSend;
+            //PERCORRE AS QUERYS E VERIFICA SE ALGUMA ATENDE A CONSULTA
+            while (current != NULL) {
+
+                DNA * dnaQuery = current - > dna;
+                desc_size = strlen(dnaQuery - > descricao);
+                detalheSend = (char * ) malloc(desc_size + 1);
+                stpcpy(detalheSend, dnaQuery - > descricao);
+                result = bmhs(base, strlen(base), dnaQuery - > conteudo, strlen(dnaQuery - > conteudo));
+                //QUANDO ACHA UMA INFORMACAO ENVIA PARA A MASTER
+                if (result > 0) {
+                    result += offset;
+                    MPI_Send( & result, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+                    MPI_Send( & desc_size, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+                    MPI_Send(detalheSend, desc_size + 1, MPI_CHAR, 0, tag, MPI_COMM_WORLD);
+                }
+                free(detalheSend);
+                current = current - > next;
+            }
+            //AVISA QUE ACABOU O PROCESSAMENTO DAS QUERYS
+            MPI_Send( & result, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+            MPI_Send( & desc_size, 1, MPI_INT, 0, 100, MPI_COMM_WORLD);
+            MPI_Send(detalheSend, desc_size + 1, MPI_CHAR, 0, 100, MPI_COMM_WORLD);
+        }
+    }
+
+    if (my_rank == 0) {
+        closefiles();
+        free(bases);
+        liberaLista(ListaQuery);
+        liberaLista(listaBase);
+        liberaListaResp(resposta);
+    }
+
+    MPI_Finalize();
+
+    return EXIT_SUCCESS;
 }
